@@ -1,0 +1,111 @@
+import re
+from math import inf
+import heapq
+from functools import cache
+
+with open("./16/test_input.txt", "r") as f:
+	lines = f.readlines()
+
+# Setup from input
+pattern = r"Valve ([A-Z]{2}) has flow rate=(\d+); tunnel lead to valve ([^$\n]+)"
+
+valves = {}
+for line in lines:
+	line = line.replace("valves", "valve").replace("tunnels", "tunnel").replace("leads", "lead")
+	if (match:=re.match(pattern, line)):
+		valve_name, flow_rate, lead_to = match.groups()
+		valves[valve_name] = {"flow": int(flow_rate), "leads_to": [v.strip() for v in lead_to.split(",")]}
+	else:
+		raise ValueError("Bad Regex")
+
+
+# Setup a simplified graph using djikstra's algorithm
+graph = {v: valves[v].get('leads_to') for v in valves.keys()}
+
+# for a given src, destination, and graph, compute the shortest path from src -> dst
+def get_shortest_path(src, dst, graph):
+	distances = {node: inf for node in graph.keys()}
+	distances[src] = 0 # start at the source node
+	min_dist = [(0, src)]
+	visited = set() # visited nodes
+
+	# core algorithm
+	while min_dist:
+		cur_dist, node = heapq.heappop(min_dist)
+		if node in visited: # if this node has been visited, go to the next minimum distance
+			continue
+		visited.add(node)    
+		
+		for neighbor in graph[node]:
+			if neighbor in visited: # if we have already visited the neighbour, move to the next neighbour
+				continue
+
+			# the distance to this node is the current distance travelled plus 1 (for unweighted vertices) 
+			this_dist = cur_dist + 1 # graph[node][neighbor]
+
+			# push onto the heap
+			if this_dist < distances[neighbor]:
+				distances[neighbor] = this_dist
+				heapq.heappush(min_dist, (this_dist, neighbor))
+		
+	# sanity check
+	if len(visited) != len(distances): 
+		print("eeeeeek")
+
+	# get the distance to the ending position
+	return distances.get(dst)
+
+nonzero_valves = [v for v in valves.keys() if valves[v].get('flow') != 0] + ['AA'] # Add AA because we start there
+distances = {valve: {dst: get_shortest_path(valve, dst, graph) for dst in nonzero_valves if dst != valve} for valve in nonzero_valves}
+
+# Core solution, now the nasty part
+# Perform graph traversal while tracking time and pressure released
+
+# computation of potential total pressure released if travelled to valve and released it
+def get_potential(t, d, v):
+	# potential pressure left is time remaining after travelled and release times flow rate
+	return (t-d-1)*valves[v].get('flow')
+
+
+# caching for speedup if we compute a path we have already seen
+@cache # this was tested and it's actually slower but i am proud
+def dfs(t, path, released, pressure):
+	if t <= 0:
+		return t, path, released, pressure
+
+	position = path[-2:]
+	possibilities = {v: d for v, d in distances[position].items() if v not in released and d+1 < t}
+
+	# there's no possibilities left, return the pressure for this path
+	if not possibilities:
+		return t, path, released, pressure
+
+	potentials = sorted([(v, get_potential(t, d, v)) for v, d in possibilities.items()], key=lambda x: x[1], reverse=True)
+
+	# perform a dfs for if we released that valve
+	return max(
+		[
+			dfs(
+				t-possibilities[valve]-1, 
+				f'{path},{valve}', 
+				f'{released},{valve}', 
+				pressure+pressure_released
+				) 
+				for valve, pressure_released in potentials
+		], key=lambda x: x[3])
+
+
+print("Trying dfs, lord have mercy")
+import time
+start = time.time()
+_, _, released, pp = dfs(26, 'AA', 'AA', 0)
+end = time.time()
+
+print(f"The person released {released}")
+nonzero_valves = [v for v in valves.keys() if valves[v].get('flow') != 0 and v not in released] + ['AA'] # Add AA because we start there
+print(f"This makes the updated nonzero valves {nonzero_valves}")
+
+print("Go elephant go")
+_, _, released, ep = dfs(26, 'AA', released, pp)
+
+print(released, ep+pp)
